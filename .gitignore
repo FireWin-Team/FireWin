@@ -1,0 +1,22 @@
+# 构建产物
+src/FireWin/bin/
+src/FireWin/obj/
+pe/build/
+dist/
+
+# 本地工具链（dotnet SDK / cmake，体积巨大，按 README 自行准备）
+.buildtools/
+
+# 下载缓存（安装包原始文件，成品已在 pe\apps）
+downloads/
+
+# 大型 PE 资源与介质（全部可由 scripts/build-minipe.ps1 重新生成）
+payload/
+
+# 介质文件
+*.wim
+*.iso
+*.sdi
+
+# 临时 / 演示数据
+*.log

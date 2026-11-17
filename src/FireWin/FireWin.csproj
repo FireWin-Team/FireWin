@@ -1,0 +1,91 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FireWin 桌面端（Windows 运行环境）
+    许可证：GPL-3.0-only（允许商业使用；任何衍生发布必须同样以 GPL-3.0 开源）
+    发布方式：dotnet publish -c Release -r win-x64 -p:SelfContained=true -p:PublishSingleFile=true
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+
+    <AssemblyName>FireWin</AssemblyName>
+    <RootNamespace>FireWin</RootNamespace>
+
+    <!-- 写引导需要 bcdedit：启动即请求管理员权限 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- 只产出 x64：libwim-15.dll 仅提供 x64 版本，避免 AnyCPU 在 32 位宿主下加载失败 -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+    <!-- 自包含 + 单文件：显式声明，禁止依赖目标机器上的 .NET 运行时 -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- 单文件模式下原生库（libwim-15.dll）默认不落地，必须显式允许自解压，否则 DllImport 失败 -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- 许可证与版本信息 -->
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>FireWin</Product>
+    <Description>Windows 双环境部署工具（桌面端向导 + 原生 PE 部署器）</Description>
+    <Copyright>Copyright (C) 2026 FireWin contributors</Copyright>
+
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      ManagedWimLib 2.6.0（LGPL-3.0-or-later）
+      NuGet 包内置 runtimes/win-x64/native/libwim-15.dll，随单文件发布自动带上
+    -->
+    <PackageReference Include="ManagedWimLib" Version="2.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      随包资源：只含运行必需的成品 PE（payload\pe）。
+      ADK 安装包不随包分发——只有重新制作 PE 时才需要，由 AdkInstaller 按需获取。
+    -->
+    <Content Include="$(MSBuildProjectDirectory)\..\..\payload\**\*"
+             Condition="Exists('$(MSBuildProjectDirectory)\..\..\payload')">
+      <Link>payload\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <!-- 成品 PE 有 500 MB 以上，绝不能塞进单文件 exe：保持在 exe 同级目录 -->
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <!-- 单文件发布不会自动带上 Content 项，这里显式把 payload 复制到发布目录（xcopy 式，保留子目录结构） -->
+  <Target Name="CopyBundledPayloadToPublish"
+          AfterTargets="Publish"
+          Condition="Exists('$(MSBuildProjectDirectory)\..\..\payload')">
+    <ItemGroup>
+      <_BundledPayloadFile Include="$(MSBuildProjectDirectory)\..\..\payload\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_BundledPayloadFile)"
+          DestinationFiles="@(_BundledPayloadFile->'$(PublishDir)payload\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <!-- 调试/发布时保证 libwim 原生库始终被复制到输出目录，便于 WimInitService 定位 -->
+    <None Include="runtimes\win-x64\native\libwim-15.dll"
+          Condition="Exists('runtimes\win-x64\native\libwim-15.dll')"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="libwim-15.dll" />
+  </ItemGroup>
+
+</Project>
