@@ -31,7 +31,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # 静态 CRT：MultiThreaded = /MT，MultiThreadedDebug = /MTd
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-add_executable(FireWinPE main.cpp)
+add_executable(FireWinPE main.cpp res/app.rc res/icon.rc)
 
 target_compile_definitions(FireWinPE PRIVATE
     UNICODE
@@ -48,6 +48,11 @@ target_compile_options(FireWinPE PRIVATE
     /EHsc
 )
 
+# comdlg32：「安装系统」的文件选择对话框（GetOpenFileNameW）
+# msimg32：背景图 / 图标的 AlphaBlend 半透明绘制
+# shell32：桌面模式用 ExtractIconExW 提取工具图标
+target_link_libraries(FireWinPE PRIVATE comdlg32 msimg32 shell32)
+
 # 控制台子系统：startnet.cmd 中直接运行可复用 conhost 输出，双击运行也会弹出控制台
 target_link_options(FireWinPE PRIVATE /SUBSYSTEM:CONSOLE)
 
@@ -62,7 +67,7 @@ set_target_properties(FireWinPE PROPERTIES
 # FireBoot —— 独立引导工具（写入 PE 引导 / 修复系统引导 / 查看 BCD）
 # GUI 子系统：双击直接开窗，输出走窗口内日志框；同样静态 CRT。
 # ---------------------------------------------------------------------------
-add_executable(FireBoot boottool.cpp)
+add_executable(FireBoot boottool.cpp res/icon.rc)
 
 target_compile_definitions(FireBoot PRIVATE
     UNICODE

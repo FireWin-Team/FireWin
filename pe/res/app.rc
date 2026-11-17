@@ -1,0 +1,9 @@
+// FireWin PE 图标与背景资源
+#include <windows.h>
+#include "resource.h"
+
+// 启动器整窗背景（由 res\background.png 转成的 24 位 BMP）
+IDB_BACKGROUND BITMAP "background.bmp"
+
+// 加载页品牌 logo（由 desktop 的 FireWin.png 裁掉透明留白后的 32 位 BMP，含 alpha）
+IDB_LOGO RCDATA "logo.bmp"

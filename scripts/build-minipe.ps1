@@ -43,6 +43,14 @@ param(
     # 默认使用仓库内的 pe\apps；该目录不存在时只告警并跳过，不影响 PE 构建。
     [string]$AppsDirectory,
 
+    # 基础驱动目录（含 .inf 的驱动包，如网卡 / 显卡 / 存储控制器），构建时用 dism 递归注入 boot.wim。
+    # 默认使用仓库内的 pe\drivers；目录不存在或没有 .inf 时只告警并跳过。
+    [string]$DriversDirectory,
+
+    # 系统组件补齐目录（System32 / SysWOW64 子目录），默认使用仓库内的 pe\runtime。
+    # WinPE 精简掉了 comctl32.dll、oledlg.dll、msi.dll，缺了它们第三方工具会直接报 14001。
+    [string]$RuntimeDirectory,
+
     # ISO 输出路径
     [string]$OutputIso,
 
@@ -280,6 +288,24 @@ try {
         }
     }
 
+    Write-Step '注入基础驱动（pe\drivers）'
+    # 用户自备驱动：把驱动包（含 .inf 的目录）放进 pe\drivers\，构建时递归注入，
+    # 免得进 PE 后还要手动 drvload；运行时也可以用启动器「加载驱动…」随时补。
+    $driversSource = if ($DriversDirectory) { $DriversDirectory } else { Join-Path $repoRoot 'pe\drivers' }
+    if (Test-Path $driversSource) {
+        $infCount = @(Get-ChildItem -Path $driversSource -Filter '*.inf' -Recurse -File).Count
+        if ($infCount -gt 0) {
+            Write-Host "  发现 $infCount 个 INF，递归注入 $driversSource" -ForegroundColor Yellow
+            Invoke-Dism -Dism $dism -Arguments @("/Add-Driver", "/Image:$mountDirectory", "/Driver:$driversSource", "/Recurse")
+        }
+        else {
+            Write-Host "  $driversSource 下没有 .inf，跳过驱动注入" -ForegroundColor DarkYellow
+        }
+    }
+    else {
+        Write-Warning "基础驱动目录不存在，已跳过：$driversSource"
+    }
+
     Write-Step '复制 PE 端程序与第三方工具到 \Tools'
     $targetTools = Join-Path $mountDirectory 'Tools'
     New-Item -ItemType Directory -Path $targetTools -Force | Out-Null
@@ -304,26 +330,99 @@ try {
     if (Test-Path $appsSource) {
         $targetApps = Join-Path $targetTools 'Apps'
         New-Item -ItemType Directory -Path $targetApps -Force | Out-Null
-        Copy-Item -Path (Join-Path $appsSource '*') -Destination $targetApps -Recurse -Force
+        # 排除 PE 里用不到的附加文件（说明文档 / 调试符号 / 帮助文件），省 boot.wim 体积
+        & robocopy $appsSource $targetApps /S /XF '说明.txt' '*.pdb' '*.chm' /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "复制常用工具失败（robocopy 退出码 $LASTEXITCODE）"
+        }
         Write-Host "  常用工具：$appsSource -> $targetApps" -ForegroundColor Yellow
     }
     else {
         Write-Warning "常用工具目录不存在，已跳过：$appsSource"
     }
 
-    Write-Step '修改 startnet.cmd（wpeinit 之后进入图形启动器）'
+    Write-Step '补齐 PE 精简掉的系统组件（pe\runtime）'
+    # WinPE 默认裁掉了 comctl32.dll / oledlg.dll / msi.dll，而几乎所有第三方工具
+    # 都静态导入 comctl32.dll，缺了它会以 14001（SxS 配置错误）或「缺少 DLL」直接退出。
+    $runtimeSource = if ($RuntimeDirectory) { $RuntimeDirectory } else { Join-Path $repoRoot 'pe\runtime' }
+    if (Test-Path $runtimeSource) {
+        foreach ($arch in @('System32', 'SysWOW64')) {
+            $runtimeArch = Join-Path $runtimeSource $arch
+            if (-not (Test-Path $runtimeArch)) {
+                continue
+            }
+
+            $runtimeTarget = Join-Path $mountDirectory ('Windows\' + $arch)
+            Copy-Item -Path (Join-Path $runtimeArch '*') -Destination $runtimeTarget -Force
+            Write-Host ("  {0}：{1} 个文件 -> {2}" -f $arch, @(Get-ChildItem -Path $runtimeArch -File).Count, $runtimeTarget) -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Warning "系统组件补齐目录不存在，已跳过：$runtimeSource"
+    }
+
+    Write-Step '修改 startnet.cmd（补 SxS 注册表项，wpeinit 之后进入图形启动器）'
     $startnet = Join-Path $mountDirectory 'Windows\System32\startnet.cmd'
     $content = if (Test-Path $startnet) { Get-Content -Path $startnet -Raw } else { "wpeinit`r`n" }
 
+    # WinPE 的 SOFTWARE 注册表里没有 SideBySide\Winners，而第三方工具基本都带 comctl32 v6 清单，
+    # 个别工具（SystemInformer 的 peview）还带 GdiPlus 清单。缺少 Winners 时创建激活上下文会失败，
+    # 程序以 14001（ERROR_SXS_CANT_GEN_ACTCTX）直接退出。
+    # 这里在启动时把镜像内已有程序集的 Winners 项补回去，两种命名风格都写：
+    #   · 旧式键「名字_版本_none_哈希」——Win7 时代的查法；
+    #   · 新式键「名字_none_哈希」+「主版本.次版本」子键——当前 Windows 的查法。
+    $sxsRoot = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\SideBySide\Winners'
+    $sxsKnown = @(
+        'amd64_microsoft.windows.common-controls_6595b64144ccf1df_none_62fe57338acfab7a',
+        'amd64_microsoft.windows.gdiplus_6595b64144ccf1df_none_6e8eef9408f10c66'
+    )
+    $sxsAssemblies = @(Get-ChildItem -Path (Join-Path $mountDirectory 'Windows\WinSxS') -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if ($_.Name -match '^(?<prefix>.+)_(?<version>\d+\.\d+\.\d+\.\d+)_none_[0-9a-f]+$') {
+                [pscustomobject]@{
+                    Name    = $_.Name
+                    Prefix  = $Matches['prefix']
+                    Version = $Matches['version']
+                }
+            }
+        })
+
+    $sxsLines = @()
+    foreach ($canonical in $sxsKnown) {
+        $prefix = $canonical -replace '_none_[0-9a-f]+$', ''
+        $found = @($sxsAssemblies | Where-Object { $_.Prefix -eq $prefix })
+        if ($found.Count -eq 0) {
+            continue
+        }
+
+        $sxsLines += 'reg add "' + $sxsRoot + '\' + $canonical + '" /ve /d "" /f >nul 2>nul'
+        foreach ($assembly in $found) {
+            $majorMinor = ($assembly.Version -split '\.')[0..1] -join '.'
+            $sxsLines += 'reg add "' + $sxsRoot + '\' + $canonical + '\' + $majorMinor + '" /ve /d "' + $assembly.Version + '" /f >nul 2>nul'
+            $sxsLines += 'reg add "' + $sxsRoot + '\' + $assembly.Name + '" /ve /d "' + $assembly.Version + '" /f >nul 2>nul'
+        }
+    }
+
+    if ($sxsLines.Count -eq 0) {
+        Write-Warning 'WinSxS 里找不到 comctl32 / GdiPlus 程序集，第三方工具可能仍会报 14001。'
+    }
+    else {
+        Write-Host ("  SxS Winners：{0} 条" -f $sxsLines.Count) -ForegroundColor Yellow
+    }
+
     # 以 exe 名（而不是完整参数）作为已注入标记：旧的 /autodeploy 版本同样能识别，避免重复注入
     if ($content -notmatch 'FireWinPE\.exe') {
-        $block = @(
+        $blockLines = @('')
+        $blockLines += 'rem ---- FireWin: restore SideBySide winners (comctl32 v6 / GdiPlus manifests) ----'
+        $blockLines += $sxsLines
+        $blockLines += @(
             '',
             'rem ---- FireWin launcher entry ----',
             'if exist X:\Tools\FireWinPE.exe (',
             '    X:\Tools\FireWinPE.exe',
             ')'
-        ) -join "`r`n"
+        )
+        $block = $blockLines -join "`r`n"
 
         if ($content -notmatch '(?im)^\s*wpeinit\s*$') {
             $content = "wpeinit`r`n" + $content
@@ -335,6 +434,14 @@ try {
     Write-Step '提交并卸载 boot.wim'
     Invoke-Dism -Dism $dism -Arguments @('/Unmount-Image', "/MountDir:$mountDirectory", '/Commit')
     $mounted = $false
+
+    # boot.wim 会被整份载入内存盘，超过 1.2 GB 在 2 GB 内存的机器上很容易起不来
+    $wimLimitMb = 1200
+    $wimSizeMb = (Get-Item -Path $bootWim).Length / 1MB
+    if ($wimSizeMb -gt $wimLimitMb) {
+        throw ("boot.wim 体积 {0:N0} MB 超过 {1} MB 上限，请精简 pe\apps 或 pe\drivers 后重试。" -f $wimSizeMb, $wimLimitMb)
+    }
+    Write-Host ("  boot.wim 体积：{0:N0} MB（上限 {1} MB）" -f $wimSizeMb, $wimLimitMb) -ForegroundColor Green
 
     if ($OutputIso) {
         Write-Step "导出 ISO：$OutputIso"

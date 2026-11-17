@@ -273,8 +273,10 @@ public static class DeployService
     #region 文件复制
 
     /// <summary>带百分比进度的大文件复制（顺序读 + 异步写，1MB 缓冲）。</summary>
+    /// <param name="percentProgress">可选：本次复制的 0–100 百分比（供界面进度条使用）。</param>
     public static async Task CopyFileWithProgressAsync(
-        string sourcePath, string destinationPath, IProgress<string>? progress, CancellationToken cancellationToken)
+        string sourcePath, string destinationPath, IProgress<string>? progress, CancellationToken cancellationToken,
+        IProgress<int>? percentProgress = null)
     {
         long total = new FileInfo(sourcePath).Length;
         Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
@@ -301,12 +303,15 @@ public static class DeployService
             if (percent != lastPercent)
             {
                 lastPercent = percent;
-                progress?.Report($"复制系统镜像… {percent}%（{FormatBytes(copied)} / {FormatBytes(total)}）");
+                progress?.Report(
+                    $"复制 {Path.GetFileName(sourcePath)}… {percent}%（{FormatBytes(copied)} / {FormatBytes(total)}）");
+                percentProgress?.Report(percent);
             }
         }
 
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-        progress?.Report("系统镜像复制完成。");
+        percentProgress?.Report(100);
+        progress?.Report($"复制 {Path.GetFileName(sourcePath)} 完成。");
     }
 
     #endregion

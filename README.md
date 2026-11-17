@@ -1,6 +1,12 @@
 # FireWin
 
-Windows 离线部署工具：桌面端是**四步部署向导**（选镜像 → 选版本 → 选分区 → 一键部署），内置完整 WinPE，自动写入一次性引导，重启后自动安装系统——全程无需联网、无需安装 ADK；PE 端在裸 WinPE 中直接部署镜像。
+Windows 离线部署工具，多功能集于一体：
+
+- **二合一入口**（桌面端）：同一个 exe、同一个目录，启动后选择「一键安装系统」或「制作 PE」，两个功能不再分成两套程序；
+- **系统部署向导**（桌面端）：**四步部署**（选镜像 → 选版本 → 选分区 → 一键部署），内置完整 WinPE，自动写入一次性引导，重启后自动安装系统——全程无需联网、无需安装 ADK；
+- **制作 PE 启动盘 / 生成 ISO**（桌面端）：把内置 WinPE 写入 U 盘（隐藏启动分区 + 正常数据分区，UEFI / Legacy BIOS 双引导），或生成可启动 ISO（内置 ISO9660 + El Torito 写入器，不依赖 ADK / oscdimg）；
+- **镜像目录 `FWIMG`**：制作时自动在数据分区（或 ISO 根目录）创建，往里放 WIM / ESD / SWM / ISO 即可，PE 端优先扫描 `\FWIMG`、兼容旧的 `\Images`；
+- **PE 端**：裸 WinPE 双击即用，既按 `deploy.json` 自动部署，也能独立扫描 `FWIMG` / `Images` 目录选镜像安装。
 
 **许可证：GPL-3.0-only**。允许商业使用；任何基于本项目的衍生发布必须同样以 GPL-3.0 开源。
 
@@ -38,16 +44,21 @@ WinPE 是微软裁剪过的运行环境：没有 .NET 运行时，也不支持 W
 src/FireWin/                桌面端（.NET 8 / WPF）
   FireWin.csproj
   app.manifest                       启动即请求管理员权限（写引导需要 bcdedit）
-  App.xaml / App.xaml.cs             入口：无参数开窗，带参数走命令行
+  App.xaml / App.xaml.cs             入口：无参数开选择页，带参数走命令行
+  LauncherWindow.xaml / .xaml.cs     启动选择页：「一键安装系统」/「制作 PE」
   MainWindow.xaml / .xaml.cs         主窗口：四步部署向导（镜像 → 版本 → 分区 → 部署）
+  UsbWindow.xaml / .xaml.cs          制作 PE 窗口：写入 U 盘 / 生成 ISO 两种模式
   Services/
     WimInitService.cs                libwim-15.dll 定位 + wimlib 全局初始化
     DeployService.cs                 ISO 挂载 / WIM 版本枚举 / 分区枚举 / 镜像带进度复制
     AdkInstaller.cs                  ADK / WinPE 附加组件检测与静默安装（仅命令行 / 重建 PE 时使用）
     BcdBootService.cs                组装 C:\FireWinPE + deploy.json + 临时引导写入（bcdedit + bootsequence）
+    UsbBootService.cs                U 盘枚举（IOCTL）/ diskpart 双分区 / PE 写入 / 隐藏启动分区 / U 盘独立 BCD / bootsect
+    IsoImageService.cs               自研 ISO9660 + El Torito 写入器（UEFI + BIOS 双引导，无需 ADK）
 pe/                                  PE 端（C++17 / Win32）
   CMakeLists.txt
-  main.cpp                           图形启动器 + 读 deploy.json → wimlib-imagex apply → bcdboot → 清理 BCD
+  drivers/                           基础驱动目录（放 .inf 驱动包，构建时自动注入 boot.wim）
+  main.cpp                           桌面外壳（壁纸 / 桌面图标 / 任务栏 / 开始菜单，`/shell` 为经典启动器）+ 读 deploy.json → wimlib-imagex apply → bcdboot → 清理 BCD；无 deploy.json 时支持「安装系统」（优先扫描 \FWIMG、兼容 \Images、选版本、选分区），另有「加载驱动」（\Drivers 扫描 + drvload）与「网络初始化」
   boottool.cpp                       FireBoot 独立引导工具（写 PE 引导 / 修复系统引导 / 查看 BCD）
   apps/                              常用工具（构建时注入 PE 的 \Tools\Apps\）
     Explorer++/Explorer++.exe        文件管理器
@@ -150,7 +161,7 @@ dumpbin /dependents pe\build\bin\FireWinPE.exe
 
 ### 5.1 桌面端（正常 Windows 中运行）
 
-双击 `FireWin.exe` 即可（带 `requireAdministrator` 清单，UAC 自动提权）。向导共四步：
+双击 `FireWin.exe` 即可（带 `requireAdministrator` 清单，UAC 自动提权）。先进入**启动选择页**：点「一键安装系统」进入四步部署向导，点「制作 PE」进入 PE U 盘 / ISO 制作窗口（见 5.2）。向导共四步：
 
 1. **欢迎页**：确认管理员权限、内置 PE 资源、固件类型（UEFI / BIOS 自动检测）；
 2. **第一步 · 选择系统镜像**：选 Windows 原版 ISO（自动挂载并定位 `sources\install.wim` / `install.esd`），或直接选择 WIM / ESD / SWM 镜像；
@@ -187,22 +198,66 @@ shutdown /r /t 0
 
 6. 重启后自动进入 PE，`startnet.cmd` 调用 PE 端程序开始安装。
 
-### 5.2 PE 端（WinPE 中运行）
+### 5.2 制作 PE 启动盘 / 生成 ISO（桌面端）
 
-`startnet.cmd` 默认进入图形启动器：
+启动选择页点「制作 PE」进入独立窗口，顶部切换两种输出方式：
+
+**① 写入 U 盘**：选 U 盘 →（可选）附加 ISO / WIM / ESD 镜像 → 「开始制作」。工具自动完成：
 
 ```text
-FireWinPE.exe                                     打开图形启动器：先用工具，再点「开始安装」
+diskpart 清盘重新分区（MBR）
+  ├─ FAT32 启动分区（卷标 FireWinPE，活动分区，容量按 boot.wim/boot.sdi 实际体积估算并 512MB 对齐，最小 1.5GB）
+  └─ exFAT 数据分区（剩余全部空间，卷标 FireData，可存 >4GB 大文件）
+写入 PE 引导文件
+  ├─ \sources\boot.wim（内置 PE）
+  ├─ \boot\boot.sdi
+  ├─ \bootmgr                     ← 来自 C:\Windows\Boot\PCAT\bootmgr
+  └─ \EFI\Boot\bootx64.efi        ← 来自 C:\Windows\Boot\EFI\bootmgfw.efi
+bcdedit /createstore 生成 U 盘独立 BCD（device boot 别名，与盘符无关）
+bootsect /nt60 <U盘> /force /mbr  写 BIOS 引导代码（找到 bootsect.exe 时）
+创建镜像目录 → 数据分区 \FWIMG\（附「把系统镜像放到这里.txt」）
+（可选）复制系统镜像 → 数据分区 \FWIMG\install.<ext>
+隐藏启动分区（diskpart remove letter，不分配盘符）
+```
+
+**② 生成 ISO**：选输出路径（默认 exe 同级的 `FireWinPE.iso`）→（可选）附加镜像 → 「生成 ISO」。内置 ISO9660 + El Torito 写入器，直接复用本机安装介质自带的引导文件，**不依赖 ADK / oscdimg**：
+
+```text
+\BOOTMGR  \BOOT\BCD  \BOOT\BOOT.SDI  \SOURCES\BOOT.WIM
+\EFI\BOOT\BOOTX64.EFI  \EFI\MICROSOFT\BOOT\BCD
+\FWIMG\INSTALL.<ext>                （可选附加镜像）
+El Torito：BIOS → etfsboot.com；UEFI → efisys_noprompt.bin
+```
+
+要点：
+
+- **UEFI / Legacy BIOS 双引导**：MBR + FAT32 + 活动分区同时满足两种固件；BCD 中 `path` 写 `winload.efi`，bootmgr 会按固件自动替换为 `winload.exe`，一份 BCD 通吃；
+- **双分区与隐藏启动分区**：启动分区只放 PE 引导文件，写完后移除盘符，在「此电脑」里只看到正常的数据分区；UEFI 固件按分区结构启动，不依赖盘符；
+- **镜像目录 `FWIMG`**：程序在数据分区（U 盘）或 ISO 根目录自动创建，往里放 WIM / ESD / SWM / ISO 都行；PE 端**优先扫描 `\FWIMG`，兼容旧的 `\Images`**；镜像放在 exFAT 数据分区，不受 FAT32 单文件 4GB 限制；
+- **bootsect.exe 缺失时仅警告**：UEFI 启动不受影响，只有 Legacy BIOS 启动需要它。搜索顺序：exe 目录 → exe 目录\tools → 已安装 ADK 的 Deployment Tools；
+- **换机启动**：启动盘与制作机器无关，任何 UEFI 或 Legacy BIOS 机器从启动菜单（F12 / F8 / Esc）选 U 盘 / ISO 即可进入 FireWin PE。
+
+### 5.3 PE 端（WinPE 中运行）
+
+`startnet.cmd` 默认进入 FireWin PE 桌面（壁纸 + 桌面图标 + 任务栏 + 开始菜单，操作习惯与 Windows 一致）：
+
+```text
+FireWinPE.exe                                     进入桌面模式：双击图标启动工具
+FireWinPE.exe /shell                              经典单窗口启动器（桌面异常时的兜底入口）
 FireWinPE.exe /autodeploy [/config:<deploy.json>] 无人值守入口
 ```
 
-启动器窗口提供「开始安装」按钮（仅在找到 `deploy.json` 时显示）以及常用工具：
+桌面图标按 Windows 习惯竖向排列（先填满一列再换右边一列），没有 exe 图标的条目用 GDI 绘制的矢量图标；底部任务栏置顶，含「开始」按钮、已打开窗口按钮与时钟。桌面和开始菜单都提供「开始安装」（仅在找到 `deploy.json` 时显示）、「安装系统」以及常用工具：
 
+- **安装系统**（无 `deploy.json` 时可用，U 盘启动场景的主力功能）：自动扫描所有分区 `\FWIMG` 目录（兼容旧的 `\Images`）中的 WIM / ESD / SWM（也可浏览任意文件）→ wimlib 解析索引并选择 Windows 版本 → 选择安装目标分区与引导分区（UEFI 时自动预选 ESP）→ 确认后走与 `deploy.json` 完全相同的部署流程；
+- **动态工具按钮**（参考微PE / 优启通等市面常见 PE 的工具集）：启动器自动扫描 `X:\Tools\Apps\`，识别到就显示按钮、不存在自动隐藏——分区与恢复（`DiskGenius 分区`、`分区表恢复(TestDisk)`、`文件恢复(PhotoRec)`）、系统部署（`WinNTSetup 安装器`、`Dism++ 系统精简`）、硬件信息（`CPU-Z`、`GPU-Z`、`硬盘健康检测(CrystalDiskInfo)`）、系统维护（`任务管理器(Process Explorer)`、`进程高级管理(System Informer)`、`启动项管理(Autoruns)`、`网络连接查看(TCPView)`、`Windows 密码清除(NTPWEdit)`、`虚拟光驱(OSFMount)`、`Everything 搜索`、`Q-Dir 文件管理`）；工具多时窗口自动从 2 列扩到 3~4 列，保证 768p 屏幕也能一屏放下。把工具放进 `pe\apps\<目录>\`（构建时随 PE 打包）或启动盘的 `\Tools\Apps\`（运行时扫描）即可，未知目录也能识别（取第一个 exe，按钮文字为目录名）。运行 `scripts\download-pe-apps.ps1` 可一键从官方渠道下载工具到 `pe\apps`（仓库已内置 16 个工具目录：7-Zip、Explorer++、Notepad++、Everything、CPU-Z、Dism++、ProcExp、NTPWEdit、DiskGenius、TestDisk/PhotoRec、System Informer、Q-Dir、Autoruns、TCPView、SDelete）；
 - 文件管理器（Explorer++）、7-Zip、Notepad++、记事本、注册表编辑器；
+- **加载驱动**：扫描所有分区 `\Drivers` 目录（含 U 盘）中的 INF 并用 `drvload` 现场加载——PE 启动后缺网卡 / 显卡 / 存储控制器驱动时无需重做 PE；构建 PE 时也可以把驱动放进 `pe\drivers\` 由脚本自动注入（见 4.3）；
+- **网络初始化**：`wpeutil InitializeNetwork`；
 - 命令提示符（工作目录 `X:\`）、磁盘管理（`diskpart`）、引导工具（`FireBoot.exe`：写 PE 引导、修复系统引导、查看 BCD）；
 - 重启 / 关机（优先 `wpeutil.exe`，缺失时回退 `ExitWindowsEx`）。
 
-工具从 `X:\Tools\Apps\<工具>\` 以 `CreateProcessW` 拉起，启动器窗口不阻塞；找不到文件时会提示具体路径。未找到 `deploy.json` 时，说明区域会提示「未找到部署配置 deploy.json，只能使用工具」。
+工具从 `X:\Tools\Apps\<工具>\` 以 `CreateProcessW` 拉起，桌面不阻塞；找不到文件时会提示具体路径。未找到 `deploy.json` 时，开始菜单会提示可用「安装系统」扫描 U 盘 `\Images` 直接安装，或先使用工具。
 
 点「开始安装」并确认后，后台线程执行与 `/autodeploy` 完全相同的部署流程：
 
@@ -216,7 +271,7 @@ bcdedit /delete {GUID} /f
 
 **零配置双击即用的技术解释**：PE 端是 `/MT` 静态链接 CRT 的原生 exe，仅依赖 `kernel32/user32` 等系统 DLL；wimlib 与 7-Zip 都以子进程调用，不引入额外 DLL 加载依赖。因此把 `FireWinPE.exe` 放进 `X:\Tools\` 就能直接运行，无需安装 .NET、VC++ 运行库或任何前置组件。
 
-### 5.3 FireBoot 引导工具（独立运行）
+### 5.4 FireBoot 引导工具（独立运行）
 
 `FireBoot.exe` 是独立于部署流程的引导管理小工具，完整 Windows 与 WinPE 均可双击运行（非管理员时执行操作会自动请求提权）：
 
@@ -264,7 +319,8 @@ bcdedit /delete {GUID} /f
 1. **桌面端编译**：`dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`，产物为单个 exe；
 2. **PE 端编译**：CMake 生成 MSVC 工程，`dumpbin /dependents` 确认无 `VCRUNTIME140.dll`，输出单 exe；
 3. **制作迷你 PE**：在已安装 ADK 的机器上运行 `build-minipe.ps1`，确认 `\Tools\` 与 `startnet.cmd` 已更新；
-4. **虚拟机全链路**：桌面端写入临时引导 → 重启 → 自动进入 PE → 自动部署 → 清理 BCD 项 → 正常进系统；另用 7z 压缩的镜像包重复一次。
+4. **虚拟机全链路**：桌面端写入临时引导 → 重启 → 自动进入 PE → 自动部署 → 清理 BCD 项 → 正常进系统；另用 7z 压缩的镜像包重复一次；
+5. **PE 启动盘**：桌面端「制作 PE 启动盘」写入 U 盘 → UEFI 虚拟机/真机从 U 盘启动进 PE → 「安装系统」扫描 `\Images` → 安装成功；Legacy BIOS 机器同样验证一次（需 bootsect）。
 
 ## 10. 已知限制
 

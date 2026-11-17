@@ -7,7 +7,7 @@ namespace FireWin;
 
 /// <summary>
 /// 应用程序入口：
-/// 无参数双击运行时打开 WPF 主窗口；
+/// 无参数双击运行时打开任务选择页（一键安装系统 / 制作 PE）；
 /// 带参数运行时走命令行模式（便于脚本化验证，输出会附加到调用方控制台）。
 /// </summary>
 public partial class App : Application
@@ -32,7 +32,7 @@ public partial class App : Application
             return;
         }
 
-        MainWindow = new MainWindow();
+        MainWindow = new LauncherWindow();
         MainWindow.Show();
     }
 

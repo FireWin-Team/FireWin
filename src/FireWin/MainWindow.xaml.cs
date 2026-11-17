@@ -46,6 +46,17 @@ public partial class MainWindow : Window
 
     // ---------------- 欢迎页 ----------------
 
+    /// <summary>打开「制作 PE 启动盘」窗口。</summary>
+    private void UsbEntryCard_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        new UsbWindow { Owner = this }.Show();
+    }
+
     private async Task InitWelcomePageAsync()
     {
         AppendLog("FireWin 部署向导已启动。");

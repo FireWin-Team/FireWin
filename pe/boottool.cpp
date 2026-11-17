@@ -20,6 +20,8 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include "res/resource.h"
+
 #include <algorithm>
 #include <cwctype>
 #include <fstream>
@@ -1168,6 +1170,17 @@ LRESULT CALLBACK ToolProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     switch (message)
     {
     case WM_CREATE:
+    {
+        // 标题栏 / 任务栏图标（res\app.ico 编入程序资源）
+        HICON icon = static_cast<HICON>(LoadImageW(
+            GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+            0, 0, LR_DEFAULTSIZE | LR_SHARED));
+        if (icon != nullptr)
+        {
+            SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+            SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+        }
+
         CreateControls(window);
         RefreshPeSources();
         RefreshDriveCombos();
@@ -1175,6 +1188,7 @@ LRESULT CALLBACK ToolProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
                                       ? L"当前为管理员权限，引导功能可用。"
                                       : L"当前未以管理员身份运行；执行引导操作时会请求提权。");
         return 0;
+    }
     case WM_COMMAND:
         if (HIWORD(wParam) == 0)
         {

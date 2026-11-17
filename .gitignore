@@ -13,6 +13,16 @@ downloads/
 # 大型 PE 资源与介质（全部可由 scripts/build-minipe.ps1 重新生成）
 payload/
 
+# PE 应用安装包（可由 scripts/download-pe-apps.ps1 重新下载）
+pe/apps/
+
+# 从本机 DriverStore 提取的驱动（可由 scripts/extract-drivers.ps1 重新生成）
+pe/drivers/
+
+# 临时工作目录 / 截图
+.tmp/
+.screenshots/
+
 # 介质文件
 *.wim
 *.iso
