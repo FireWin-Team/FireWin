@@ -34,7 +34,7 @@ FireWin 是“PE 启动 U 盘制作 + Windows 桌面端离线部署”的二合�
 | `src/FireWin/Services/DeployService.cs` | ISO 挂载、WIM 枚举、分区枚举、镜像复制 | `MountIsoAsync`、`ListWimImages`、`GetFixedPartitions` |
 | `src/FireWin/Services/BcdBootService.cs` | 组装 PE 落地目录、写 deploy.json、写一次性引导 | `PreparePeBootAsync`、`PeBootSession` |
 | `src/FireWin/Services/UsbBootService.cs` | U 盘枚举、分区、写 PE、独立 BCD | `ListUsbDisks`、`CreateBootDiskAsync`、`UpgradeBootDiskAsync` |
-| `src/FireWin/Services/IsoImageService.cs` | 自研 ISO9660 + El Torito 写入器 | `CreatePeIsoAsync`、`HostBcdAvailable` |
+| `src/FireWin/Services/IsoImageService.cs` | IMAPI2FS UDF 桥接盘 + El Torito 补写 | `CreatePeIsoAsync`、`HostBcdAvailable`、`PatchBiosBootEntry` |
 | `pe/CMakeLists.txt` | PE 原生端构建，强制静态 CRT | `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` |
 | `pe/main.cpp` | PE 桌面外壳、deploy.json 解析与部署 | `Deploy`、`LoadConfig`、`/autodeploy`、`/config:` |
 | `pe/boottool.cpp` | FireBoot 独立引导工具 | `WritePeBoot`、`RemovePeBoot`、`RepairBoot` |
@@ -77,7 +77,7 @@ FireWin 是“PE 启动 U 盘制作 + Windows 桌面端离线部署”的二合�
 - U 盘镜像目录名 `UsbBootService.ImageFolderName` = `FWIMG`；PE 端优先扫 `\FWIMG`，兼容 `\Images`。
 - U 盘双分区卷标固定为 `FireWinPE`（FAT32 启动分区，写完后隐藏）与 `FireData`（exFAT 数据分区）。
 - 启动分区下限 `MinBootPartitionMb` = 1536 MB，双分区时为数据分区预留 4096 MB。
-- 桌面端默认 ISO 输出 = exe 同级的 `FireWinPE.iso`；ISO9660 单文件上限 4 GB。
+- 桌面端默认 ISO 输出 = exe 同级的 `FireWinPE.iso`；实现改为 IMAPI2FS 后已无显式单文件 4 GB 校验（界面文案仍保留旧提示）。
 
 产物矩阵（当前工作区实测字节数，用于回归核对）：
 
@@ -106,7 +106,7 @@ FireWin 是“PE 启动 U 盘制作 + Windows 桌面端离线部署”的二合�
 8. 现象：系统装在 D 盘时部署报“落地目录不在系统分区”。原因：staging 固定为 `C:\FireWinPE`，而 `PreparePeBootAsync` 要求它与 `SystemDrive` 同分区。正确做法：部署前确认系统盘为 C:，或调整 staging 与 `SystemDrive` 保持一致。
 9. 现象：重新打包 PE 时 DISM 报依赖缺失或中文显示方块。原因：WinPE-PowerShell 依赖 WinPE-Scripting、WinPE-NetFx 依赖 WinPE-WMI；zh-cn 还需 WinPE-FontSupport-ZH-CN。正确做法：按依赖顺序注入，并在 `-Language zh-cn` 时保留中文字体包。
 10. 现象：ADK 检测说主包已装但仍无法 `copype`。原因：ADK 主包与 WinPE 附加组件是两个独立安装程序。正确做法：两个都安装，`--adk-status` 只有 `IsReady` 才返回 0。
-11. 现象：ISO 生成成功但装不进大于 4 GB 的 install.wim。原因：`UsbWindow` 的 ISO 模式提示里写明 ISO 内单个文件上限 4 GB。正确做法：改用 `install.esd`，或直接做 U 盘并把镜像放进 `\FWIMG`。
+11. 现象：ISO 生成成功但装不进大于 4 GB 的 install.wim。原因：界面仍提示「ISO 内单个文件上限 4 GB」，而 IMAPI2FS 实现已无显式校验。正确做法：改用 `install.esd`，或直接做 U 盘并把镜像放进 `\FWIMG`。
 12. 现象：“升级启动盘”按钮始终灰色。原因：`CanUpgradeInPlace` 只认卷标 `FireWinPE`/`FireData`，或根目录已有 `\sources\boot.wim` 的盘。正确做法：非本工具制作的盘只能“全新制作”。
 
 ## 验证清单

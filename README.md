@@ -4,7 +4,7 @@ Windows 离线部署工具，多功能集于一体：
 
 - **二合一入口**（桌面端）：同一个 exe、同一个目录，启动后选择「一键安装系统」或「制作 PE」，两个功能不再分成两套程序；
 - **系统部署向导**（桌面端）：**四步部署**（选镜像 → 选版本 → 选分区 → 一键部署），内置完整 WinPE，自动写入一次性引导，重启后自动安装系统——全程无需联网、无需安装 ADK；
-- **制作 PE 启动盘 / 生成 ISO**（桌面端）：把内置 WinPE 写入 U 盘（隐藏启动分区 + 正常数据分区，UEFI / Legacy BIOS 双引导），或生成可启动 ISO（内置 ISO9660 + El Torito 写入器，不依赖 ADK / oscdimg）；
+- **制作 PE 启动盘 / 生成 ISO**（桌面端）：把内置 WinPE 写入 U 盘（隐藏启动分区 + 正常数据分区，UEFI / Legacy BIOS 双引导），或生成可启动 ISO（用系统 IMAPI2FS 写 UDF 桥接盘并补写 El Torito，不依赖 ADK / oscdimg）；
 - **镜像目录 `FWIMG`**：制作时自动在数据分区（或 ISO 根目录）创建，往里放 WIM / ESD / SWM / ISO 即可，PE 端优先扫描 `\FWIMG`、兼容旧的 `\Images`；
 - **PE 端**：裸 WinPE 双击即用，既按 `deploy.json` 自动部署，也能独立扫描 `FWIMG` / `Images` 目录选镜像安装。
 
@@ -54,7 +54,7 @@ src/FireWin/                桌面端（.NET 8 / WPF）
     AdkInstaller.cs                  ADK / WinPE 附加组件检测与静默安装（仅命令行 / 重建 PE 时使用）
     BcdBootService.cs                组装 C:\FireWinPE + deploy.json + 临时引导写入（bcdedit + bootsequence）
     UsbBootService.cs                U 盘枚举（IOCTL）/ diskpart 双分区 / PE 写入 / 隐藏启动分区 / U 盘独立 BCD / bootsect
-    IsoImageService.cs               自研 ISO9660 + El Torito 写入器（UEFI + BIOS 双引导，无需 ADK）
+    IsoImageService.cs                IMAPI2FS 写 UDF 桥接盘 + El Torito 补写（UEFI + BIOS 双引导，无需 ADK）
 pe/                                  PE 端（C++17 / Win32）
   CMakeLists.txt
   drivers/                           基础驱动目录（放 .inf 驱动包，构建时自动注入 boot.wim）
@@ -220,7 +220,7 @@ bootsect /nt60 <U盘> /force /mbr  写 BIOS 引导代码（找到 bootsect.exe �
 隐藏启动分区（diskpart remove letter，不分配盘符）
 ```
 
-**② 生成 ISO**：选输出路径（默认 exe 同级的 `FireWinPE.iso`）→（可选）附加镜像 → 「生成 ISO」。内置 ISO9660 + El Torito 写入器，直接复用本机安装介质自带的引导文件，**不依赖 ADK / oscdimg**：
+**② 生成 ISO**：选输出路径（默认 exe 同级的 `FireWinPE.iso`）→（可选）附加镜像 → 「生成 ISO」。调用系统自带的 IMAPI2FS 写出 UDF + ISO9660 + Joliet 桥接盘，再补写 El Torito 引导目录，直接复用本机安装介质自带的引导文件，**不依赖 ADK / oscdimg**：
 
 ```text
 \BOOTMGR  \BOOT\BCD  \BOOT\BOOT.SDI  \SOURCES\BOOT.WIM

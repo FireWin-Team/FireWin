@@ -15,7 +15,7 @@ namespace FireWin;
 /// <summary>
 /// 制作 PE 窗口，两种输出方式（同一套内置 PE）：
 ///   1. 写入 U 盘：清盘分区 → 写 PE → 生成独立 BCD → 写 BIOS 引导代码（<see cref="UsbBootService"/>）；
-///   2. 生成 ISO：内置 ISO9660 + El Torito 写入器，UEFI / Legacy BIOS 双引导（<see cref="IsoImageService"/>）。
+///   2. 生成 ISO：IMAPI2FS 写 UDF + ISO9660 + Joliet 桥接盘并补写 El Torito，UEFI / Legacy BIOS 双引导（<see cref="IsoImageService"/>）。
 /// </summary>
 public partial class UsbWindow : Window
 {
