@@ -67,7 +67,7 @@ ADK 不完整时 `scripts\build-minipe.ps1` 不可用，改用系统 `dism` 加�
 
 ## 推送到 GitHub
 
-仓库 `Almmor/FireWin`，主分支 `main`。`gh` CLI 未安装；`github` 插件的 token 没有建仓权限，但可用于 git 推送：
+仓库 `FireWin-Team/FireWin`（原 `Almmor/FireWin`，已转移并自动重定向），主分支 `main`。`gh` CLI 未安装；`github` 插件的 token 没有建仓/转移权限，但可用于 git 推送：
 
 ```powershell
 git -c credential.helper='!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f' push -u origin main
